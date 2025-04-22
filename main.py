@@ -192,7 +192,7 @@ with tab1:
                 st.write(f"Toplam simülasyon süresi: {result['simulation_time'].max():.2f} saniye")
                 
                 # Copy to Extended_Trajectory_Data.csv for the visualization app
-                extended_path = "Extended_Trajectory_Data.csv"
+                extended_path = "outputs/basic_trajectory_data.csv"
                 result[['timestamp', 'latitude', 'longitude']].to_csv(extended_path, index=False)
                 st.info(f"Veriler, görselleştirme uygulaması için {extended_path} olarak da kaydedildi.")
             else:
