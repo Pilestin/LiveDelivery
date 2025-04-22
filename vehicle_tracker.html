@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Multi-Vehicle Tracker</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.3.0/papaparse.min.js"></script>
+    <style>
+        body {
+            padding: 0;
+            margin: 0;
+            font-family: Arial, sans-serif;
+        }
+        html, body, #map {
+            height: 100%;
+            width: 100%;
+        }
+        .control-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background-color: white;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 1px 5px rgba(0,0,0,0.4);
+            max-height: 90%;
+            overflow-y: auto;
+            width: 300px;
+        }
+        .vehicle-controls {
+            margin-bottom: 15px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        .vehicle-title {
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        .control-button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 5px 10px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 14px;
+            margin: 2px;
+            cursor: pointer;
+            border-radius: 3px;
+        }
+        .pause-button {
+            background-color: #f44336;
+        }
+        .reset-button {
+            background-color: #555555;
+        }
+        .speed-control {
+            margin-top: 5px;
+        }
+        .speed-slider {
+            width: 100%;
+            margin-top: 5px;
+        }
+        .vehicle-checkbox {
+            margin-right: 5px;
+        }
+        .vehicle-stats {
+            margin-top: 5px;
+            font-size: 12px;
+        }
+        .legend {
+            margin-top: 20px;
+            padding: 5px;
+            background-color: rgba(255, 255, 255, 0.8);
+            border-radius: 3px;
+        }
+        .legend-item {
+            margin-bottom: 3px;
+        }
+        .legend-color {
+            display: inline-block;
+            width: 15px;
+            height: 15px;
+            margin-right: 5px;
+            border-radius: 50%;
+        }
+        .global-controls {
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #eee;
+        }
+        .file-upload-section {
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #eee;
+        }
+        .file-upload {
+            margin-bottom: 10px;
+        }
+        #file-input {
+            display: none;
+        }
+        .file-upload-label {
+            background-color: #007bff;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            display: inline-block;
+        }
+        .file-name {
+            margin-left: 8px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div class="control-panel">
+        <h2>Multi-Vehicle Tracker</h2>
+        
+        <div class="file-upload-section">
+            <h3>Load Route Data</h3>
+            <div class="file-upload">
+                <label for="file-input" class="file-upload-label">Choose CSV File</label>
+                <input type="file" id="file-input" accept=".csv" />
+                <span id="file-name" class="file-name">No file selected</span>
+            </div>
+            <button id="load-data" class="control-button">Load Data</button>
+            <div id="data-info"></div>
+        </div>
+        
+        <div class="global-controls">
+            <button id="playAll" class="control-button">Play All</button>
+            <button id="pauseAll" class="control-button pause-button">Pause All</button>
+            <button id="resetAll" class="control-button reset-button">Reset All</button>
+        </div>
+        
+        <div id="vehicle-selector">
+            <h3>Select Vehicles</h3>
+            <div id="vehicle-checkboxes"></div>
+        </div>
+        
+        <div id="vehicle-controls-container"></div>
+        
+        <div class="legend">
+            <h3>Legend</h3>
+            <div id="legend-content"></div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize map
+        const map = L.map('map').setView([39.76, 30.52], 13);  // Eskişehir coordinates
+
+        // Add tile layer
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        // Vehicle data
+        let vehicleData = {};
+        let vehicles = [];
+        let vehicleMarkers = {};
+        let vehiclePaths = {};
+        let vehicleColors = {};
+        let vehicleAnimations = {};
+        let vehiclePositions = {};  // Current position index for each vehicle
+        let vehicleStats = {};
+        let selectedFile = null;
+        
+        // Color palette for vehicles
+        const colorPalette = [
+            '#e6194B', '#3cb44b', '#ffe119', '#4363d8', '#f58231', 
+            '#911eb4', '#42d4f4', '#f032e6', '#bfef45', '#fabed4', 
+            '#469990', '#dcbeff', '#9A6324', '#800000', '#aaffc3'
+        ];
+
+        // File input event listener
+        document.getElementById('file-input').addEventListener('change', function(e) {
+            if (e.target.files.length > 0) {
+                selectedFile = e.target.files[0];
+                document.getElementById('file-name').textContent = selectedFile.name;
+            } else {
+                selectedFile = null;
+                document.getElementById('file-name').textContent = 'No file selected';
+            }
+        });
+
+        // Load button event listener
+        document.getElementById('load-data').addEventListener('click', function() {
+            if (selectedFile) {
+                loadFileData(selectedFile);
+            } else {
+                // If no file is selected, try loading default file
+                loadData();
+            }
+        });
+
+        // Load CSV data from file input
+        async function loadFileData(file) {
+            return new Promise((resolve, reject) => {
+                Papa.parse(file, {
+                    header: true,
+                    dynamicTyping: true,
+                    complete: function(results) {
+                        // Clear previous data
+                        clearAllData();
+                        
+                        // Process new data
+                        processData(results.data);
+                        
+                        // Update UI with loaded data info
+                        document.getElementById('data-info').textContent = 
+                            `Loaded ${results.data.length} data points for ${vehicles.length} vehicle(s)`;
+                        
+                        // Build controls and display vehicles
+                        buildVehicleControls();
+                        vehicles.forEach(vehicleId => {
+                            drawVehiclePath(vehicleId);
+                        });
+                        
+                        // Center map
+                        centerMapOnData();
+                        
+                        resolve(results.data);
+                    },
+                    error: function(error) {
+                        console.error('Error parsing CSV file:', error);
+                        alert('Error loading CSV file. Check console for details.');
+                        reject(error);
+                    }
+                });
+            });
+        }
+
+        // Load default CSV data
+        async function loadData() {
+            try {
+                const response = await fetch('simulation_results.csv');
+                if (!response.ok) {
+                    throw new Error(`Network response was not ok: ${response.status}`);
+                }
+                const csvText = await response.text();
+                
+                // Clear previous data
+                clearAllData();
+                
+                // Parse and process CSV
+                const results = Papa.parse(csvText, { header: true, dynamicTyping: true });
+                processData(results.data);
+                
+                // Update UI with loaded data info
+                document.getElementById('data-info').textContent = 
+                    `Loaded ${results.data.length} data points for ${vehicles.length} vehicle(s)`;
+                
+                // Build controls and display vehicles
+                buildVehicleControls();
+                vehicles.forEach(vehicleId => {
+                    drawVehiclePath(vehicleId);
+                });
+                
+                // Center map
+                centerMapOnData();
+                
+                return results.data;
+            } catch (error) {
+                console.error('Error loading default CSV file:', error);
+                alert('Could not load default data file. Try uploading your own CSV file.');
+                return [];
+            }
+        }
+
+        // Clear all previous data and map elements
+        function clearAllData() {
+            // Clear data structures
+            vehicles.forEach(vehicleId => {
+                if (vehicleMarkers[vehicleId]) map.removeLayer(vehicleMarkers[vehicleId]);
+                if (vehiclePaths[vehicleId]) map.removeLayer(vehiclePaths[vehicleId]);
+                pauseVehicleAnimation(vehicleId);
+            });
+            
+            vehicleData = {};
+            vehicles = [];
+            vehicleMarkers = {};
+            vehiclePaths = {};
+            vehicleColors = {};
+            vehicleAnimations = {};
+            vehiclePositions = {};
+            vehicleStats = {};
+            
+            // Clear UI elements
+            document.getElementById('vehicle-checkboxes').innerHTML = '';
+            document.getElementById('vehicle-controls-container').innerHTML = '';
+            document.getElementById('legend-content').innerHTML = '';
+        }
+
+        // Process data and organize by vehicle
+        function processData(data) {
+            // Group by vehicle ID if available, otherwise assume all points belong to one vehicle
+            if (data.length > 0 && data[0].hasOwnProperty('vehicle_id')) {
+                data.forEach(point => {
+                    if (point.latitude && point.longitude) {
+                        const vehicleId = point.vehicle_id;
+                        if (!vehicleData[vehicleId]) {
+                            vehicleData[vehicleId] = [];
+                            vehicles.push(vehicleId);
+                        }
+                        vehicleData[vehicleId].push({
+                            timestamp: point.timestamp,
+                            latitude: point.latitude,
+                            longitude: point.longitude
+                        });
+                    }
+                });
+            } else {
+                // If no vehicle_id column, treat all as one vehicle
+                const defaultVehicleId = 'vehicle1';
+                vehicleData[defaultVehicleId] = data.filter(point => 
+                    point.latitude && point.longitude
+                );
+                vehicles.push(defaultVehicleId);
+            }
+            
+            // Sort by timestamp if available
+            for (const vehicleId in vehicleData) {
+                if (vehicleData[vehicleId][0] && vehicleData[vehicleId][0].timestamp) {
+                    vehicleData[vehicleId].sort((a, b) => 
+                        new Date(a.timestamp) - new Date(b.timestamp)
+                    );
+                }
+                
+                // Calculate stats
+                calculateVehicleStats(vehicleId);
+            }
+        }
+        
+        // Calculate statistics for each vehicle
+        function calculateVehicleStats(vehicleId) {
+            const points = vehicleData[vehicleId];
+            if (!points || points.length < 2) return;
+            
+            // Calculate distance
+            let totalDistance = 0;
+            for (let i = 1; i < points.length; i++) {
+                totalDistance += calculateDistance(
+                    points[i-1].latitude, points[i-1].longitude,
+                    points[i].latitude, points[i].longitude
+                );
+            }
+            
+            // Calculate duration if timestamps are available
+            let duration = 0;
+            if (points[0].timestamp && points[points.length - 1].timestamp) {
+                const startTime = new Date(points[0].timestamp);
+                const endTime = new Date(points[points.length - 1].timestamp);
+                duration = (endTime - startTime) / 1000; // in seconds
+            }
+            
+            vehicleStats[vehicleId] = {
+                totalDistance: totalDistance.toFixed(2), // in kilometers
+                duration: duration > 0 ? formatDuration(duration) : 'N/A',
+                points: points.length
+            };
+        }
+        
+        // Calculate distance between two points using Haversine formula
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; // Radius of the earth in km
+            const dLat = deg2rad(lat2 - lat1);
+            const dLon = deg2rad(lon2 - lon1);
+            const a = 
+                Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
+                Math.sin(dLon/2) * Math.sin(dLon/2); 
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+            return R * c; // Distance in km
+        }
+        
+        function deg2rad(deg) {
+            return deg * (Math.PI/180);
+        }
+        
+        function formatDuration(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const remainingSeconds = Math.floor(seconds % 60);
+            
+            return `${hours}h ${minutes}m ${remainingSeconds}s`;
+        }
+
+        // Draw vehicle path
+        function drawVehiclePath(vehicleId) {
+            const points = vehicleData[vehicleId];
+            const color = vehicleColors[vehicleId];
+            
+            if (!points || points.length === 0) return;
+            
+            // Create a polyline with the vehicle's color
+            const path = L.polyline(points.map(p => [p.latitude, p.longitude]), {
+                color: color,
+                weight: 3,
+                opacity: 0.9,
+            }).addTo(map);
+            
+            // Create a custom icon for the vehicle using the musoshi.png image
+            const vehicleIcon = L.icon({
+                iconUrl: 'images/musoshi.png',
+                iconSize: [24, 20],          // Size of the icon
+                iconAnchor: [16, 16],        // Point of the icon which corresponds to marker's location
+                popupAnchor: [0, -16],      // Point from which the popup should open
+                className: `vehicle-icon-${vehicleId.replace(/\s+/g, '-')}` // Add a class for potential customization
+            });
+            
+            // Create a marker with the vehicle icon
+            const marker = L.marker([points[0].latitude, points[0].longitude], {
+                icon: vehicleIcon
+            }).addTo(map);
+            
+            // Add vehicle ID as a tooltip
+            marker.bindTooltip(vehicleId, {
+                permanent: false,
+                direction: 'top',
+                className: 'vehicle-tooltip',
+                offset: [0, -10]
+            });
+            
+            // Store the path and marker references
+            vehiclePaths[vehicleId] = path;
+            vehicleMarkers[vehicleId] = marker;
+            vehiclePositions[vehicleId] = 0;
+            
+            // Update the stats display
+            updateVehicleStatsDisplay(vehicleId);
+        }
+        
+        // Animate vehicle movement
+        function animateVehicle(vehicleId, speed = 100) {
+            // Clear any existing animation
+            if (vehicleAnimations[vehicleId]) {
+                clearTimeout(vehicleAnimations[vehicleId]);
+            }
+            
+            const points = vehicleData[vehicleId];
+            const marker = vehicleMarkers[vehicleId];
+            let position = vehiclePositions[vehicleId];
+            
+            if (position >= points.length - 1) {
+                // Animation complete
+                return;
+            }
+            
+            // Move to the next position
+            position++;
+            vehiclePositions[vehicleId] = position;
+            
+            // Update marker position
+            marker.setLatLng([points[position].latitude, points[position].longitude]);
+            
+            // Calculate direction for the vehicle (if we have at least 2 points)
+            if (position > 0) {
+                // Get current and previous positions
+                const currentPos = points[position];
+                const prevPos = points[position - 1];
+                
+                // Calculate heading angle in degrees (0 = North, 90 = East, etc.)
+                const dx = currentPos.longitude - prevPos.longitude;
+                const dy = currentPos.latitude - prevPos.latitude;
+                const angle = Math.atan2(dx, dy) * (180 / Math.PI);
+                
+                // Rotate the icon if needed (using CSS transform)
+                const iconElement = marker.getElement();
+                if (iconElement) {
+                    const iconImg = iconElement.querySelector('img');
+                    if (iconImg) {
+                        iconImg.style.transform = `rotate(${angle}deg)`;
+                    }
+                }
+            }
+            
+            // Update progress display
+            updateVehicleProgress(vehicleId, position);
+            
+            // Continue animation with the next point
+            vehicleAnimations[vehicleId] = setTimeout(() => {
+                animateVehicle(vehicleId, speed);
+            }, speed);
+        }
+        
+        // Pause vehicle animation
+        function pauseVehicleAnimation(vehicleId) {
+            if (vehicleAnimations[vehicleId]) {
+                clearTimeout(vehicleAnimations[vehicleId]);
+                vehicleAnimations[vehicleId] = null;
+            }
+        }
+        
+        // Reset vehicle animation
+        function resetVehicleAnimation(vehicleId) {
+            pauseVehicleAnimation(vehicleId);
+            
+            const points = vehicleData[vehicleId];
+            if (!points || points.length === 0) return;
+            
+            // Move marker back to start
+            const marker = vehicleMarkers[vehicleId];
+            marker.setLatLng([points[0].latitude, points[0].longitude]);
+            
+            // Reset position counter
+            vehiclePositions[vehicleId] = 0;
+            
+            // Update progress display
+            updateVehicleProgress(vehicleId, 0);
+        }
+        
+        // Update vehicle progress display
+        function updateVehicleProgress(vehicleId, position) {
+            const progressElement = document.getElementById(`progress-${vehicleId}`);
+            if (progressElement) {
+                const points = vehicleData[vehicleId];
+                progressElement.textContent = `Position: ${position + 1}/${points.length}`;
+            }
+        }
+        
+        // Update vehicle stats display
+        function updateVehicleStatsDisplay(vehicleId) {
+            const statsElement = document.getElementById(`stats-${vehicleId}`);
+            if (statsElement && vehicleStats[vehicleId]) {
+                const stats = vehicleStats[vehicleId];
+                statsElement.innerHTML = `
+                    <strong>Stats:</strong><br>
+                    Distance: ${stats.totalDistance} km<br>
+                    Duration: ${stats.duration}<br>
+                    Data points: ${stats.points}
+                `;
+            }
+        }
+        
+        // Build the vehicle control panel
+        function buildVehicleControls() {
+            const container = document.getElementById('vehicle-controls-container');
+            container.innerHTML = ''; // Clear existing controls
+            
+            // Create vehicle checkboxes
+            const checkboxesContainer = document.getElementById('vehicle-checkboxes');
+            checkboxesContainer.innerHTML = '';
+            
+            vehicles.forEach((vehicleId, index) => {
+                // Assign color
+                vehicleColors[vehicleId] = colorPalette[index % colorPalette.length];
+                
+                // Create checkbox
+                const checkbox = document.createElement('div');
+                checkbox.innerHTML = `
+                    <input type="checkbox" id="check-${vehicleId}" class="vehicle-checkbox" 
+                           data-vehicle="${vehicleId}" checked>
+                    <label for="check-${vehicleId}">
+                        <span style="color:${vehicleColors[vehicleId]}">${vehicleId}</span>
+                    </label>
+                `;
+                checkboxesContainer.appendChild(checkbox);
+                
+                // Create controls for the vehicle
+                const controlDiv = document.createElement('div');
+                controlDiv.id = `controls-${vehicleId}`;
+                controlDiv.className = 'vehicle-controls';
+                controlDiv.innerHTML = `
+                    <div class="vehicle-title" style="color:${vehicleColors[vehicleId]}">
+                        ${vehicleId}
+                    </div>
+                    <div>
+                        <button class="control-button play-btn" data-vehicle="${vehicleId}">▶️ Play</button>
+                        <button class="control-button pause-button pause-btn" data-vehicle="${vehicleId}">⏸️ Pause</button>
+                        <button class="control-button reset-button reset-btn" data-vehicle="${vehicleId}">⏮️ Reset</button>
+                    </div>
+                    <div class="speed-control">
+                        Animation Speed:
+                        <input type="range" min="10" max="500" value="100" class="speed-slider" 
+                               data-vehicle="${vehicleId}">
+                    </div>
+                    <div id="progress-${vehicleId}">Position: 1/${vehicleData[vehicleId] ? vehicleData[vehicleId].length : 0}</div>
+                    <div id="stats-${vehicleId}" class="vehicle-stats"></div>
+                `;
+                container.appendChild(controlDiv);
+                
+                // Add to legend
+                addToLegend(vehicleId, vehicleColors[vehicleId]);
+            });
+            
+            // Set up event listeners
+            setupEventListeners();
+        }
+        
+        // Add vehicle to legend
+        function addToLegend(vehicleId, color) {
+            const legendContent = document.getElementById('legend-content');
+            const legendItem = document.createElement('div');
+            legendItem.className = 'legend-item';
+            legendItem.innerHTML = `
+                <span class="legend-color" style="background-color:${color}"></span>
+                ${vehicleId}
+            `;
+            legendContent.appendChild(legendItem);
+        }
+        
+        // Set up event listeners for controls
+        function setupEventListeners() {
+            // Vehicle checkboxes
+            document.querySelectorAll('.vehicle-checkbox').forEach(checkbox => {
+                checkbox.addEventListener('change', function() {
+                    const vehicleId = this.dataset.vehicle;
+                    const controlDiv = document.getElementById(`controls-${vehicleId}`);
+                    
+                    if (this.checked) {
+                        // Show vehicle
+                        drawVehiclePath(vehicleId);
+                        controlDiv.style.display = 'block';
+                    } else {
+                        // Hide vehicle
+                        pauseVehicleAnimation(vehicleId);
+                        if (vehicleMarkers[vehicleId]) map.removeLayer(vehicleMarkers[vehicleId]);
+                        if (vehiclePaths[vehicleId]) map.removeLayer(vehiclePaths[vehicleId]);
+                        vehicleMarkers[vehicleId] = null;
+                        vehiclePaths[vehicleId] = null;
+                        controlDiv.style.display = 'none';
+                    }
+                });
+            });
+            
+            // Play buttons
+            document.querySelectorAll('.play-btn').forEach(button => {
+                button.addEventListener('click', function() {
+                    const vehicleId = this.dataset.vehicle;
+                    const speedSlider = document.querySelector(`.speed-slider[data-vehicle="${vehicleId}"]`);
+                    animateVehicle(vehicleId, parseInt(speedSlider.value));
+                });
+            });
+            
+            // Pause buttons
+            document.querySelectorAll('.pause-btn').forEach(button => {
+                button.addEventListener('click', function() {
+                    const vehicleId = this.dataset.vehicle;
+                    pauseVehicleAnimation(vehicleId);
+                });
+            });
+            
+            // Reset buttons
+            document.querySelectorAll('.reset-btn').forEach(button => {
+                button.addEventListener('click', function() {
+                    const vehicleId = this.dataset.vehicle;
+                    resetVehicleAnimation(vehicleId);
+                });
+            });
+            
+            // Speed sliders
+            document.querySelectorAll('.speed-slider').forEach(slider => {
+                slider.addEventListener('input', function() {
+                    const vehicleId = this.dataset.vehicle;
+                    // If animation is already running, restart it with the new speed
+                    if (vehicleAnimations[vehicleId]) {
+                        pauseVehicleAnimation(vehicleId);
+                        animateVehicle(vehicleId, parseInt(this.value));
+                    }
+                });
+            });
+            
+            // Global controls
+            document.getElementById('playAll').addEventListener('click', function() {
+                vehicles.forEach(vehicleId => {
+                    if (vehicleMarkers[vehicleId]) { // Only animate displayed vehicles
+                        const speedSlider = document.querySelector(`.speed-slider[data-vehicle="${vehicleId}"]`);
+                        animateVehicle(vehicleId, parseInt(speedSlider.value));
+                    }
+                });
+            });
+            
+            document.getElementById('pauseAll').addEventListener('click', function() {
+                vehicles.forEach(vehicleId => {
+                    pauseVehicleAnimation(vehicleId);
+                });
+            });
+            
+            document.getElementById('resetAll').addEventListener('click', function() {
+                vehicles.forEach(vehicleId => {
+                    if (vehicleMarkers[vehicleId]) { // Only reset displayed vehicles
+                        resetVehicleAnimation(vehicleId);
+                    }
+                });
+            });
+        }
+        
+        // Center map on all vehicle data
+        function centerMapOnData() {
+            // Collect all points
+            let allPoints = [];
+            for (const vehicleId in vehicleData) {
+                allPoints = allPoints.concat(vehicleData[vehicleId].map(p => [p.latitude, p.longitude]));
+            }
+            
+            if (allPoints.length > 0) {
+                const bounds = L.latLngBounds(allPoints);
+                map.fitBounds(bounds, {
+                    padding: [50, 50]
+                });
+            }
+        }
+
+        // Initialize the application
+        async function init() {
+            try {
+                // Try to load default data file on startup
+                await loadData();
+            } catch (error) {
+                console.error('Error loading or processing data:', error);
+                document.getElementById('data-info').textContent = 
+                    'No data loaded. Please upload a CSV file to begin.';
+            }
+        }
+
+        // Start the application
+        init();
+    </script>
+</body>
+</html>
