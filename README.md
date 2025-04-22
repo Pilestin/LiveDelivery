@@ -5,7 +5,7 @@ This project provides tools for running SUMO traffic simulations and visualizing
 ## Components
 
 1. **Main Application** (`main.py`): A Streamlit application that lets you run SUMO simulations and analyze the results.
-2. **Vehicle Tracker** (`vehicle_tracker.html`): A web-based tool for visualizing the movement of vehicles from the simulation.
+2. **Vehicle Tracker** (`index.html`): A web-based tool for visualizing the movement of vehicles from the simulation.
 
 ## Requirements
 
@@ -30,9 +30,9 @@ This project provides tools for running SUMO traffic simulations and visualizing
    streamlit run main.py
    ```
 
-2. Upload a SUMO route file and start the simulation.
+2. Upload a SUMO route file and start the simulation. Get the simulation results in the output directory.
 
-3. After the simulation completes, you can use the "Vehicle Tracker" HTML file to visualize the movement of vehicles. Simply open the HTML file in your web browser.
+3. After the simulation completes, you can use the "index.html" HTML file to visualize the movement of vehicles. Simply open the HTML file in your web browser.
 
 ## Multi-Vehicle Tracking
 
@@ -55,6 +55,6 @@ The vehicle tracker supports visualizing multiple vehicles simultaneously:
 ## File Structure
 
 - `main.py`: Main Streamlit application
-- `vehicle_tracker.html`: Web-based vehicle visualization tool
+- `index.html`: Web-based vehicle visualization tool
 - `configs/`: Directory for configuration files
 - `outputs/`: Directory for simulation output files
